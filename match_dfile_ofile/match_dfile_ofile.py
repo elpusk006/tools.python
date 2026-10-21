@@ -12,8 +12,8 @@ class FileMatcherApp:
     def __init__(self, root):
         self.root = root
         self.root.title("배포본 - 원본 파일 매칭 프로그램")
-        self.root.geometry("1050x750")
-        self.root.minsize(850, 600)
+        self.root.geometry("1080x760")
+        self.root.minsize(880, 620)
 
         # UI 스타일 설정
         style = ttk.Style()
@@ -44,7 +44,7 @@ class FileMatcherApp:
         self.entry_fsrc.insert(0, "*.bin")
         self.entry_fsrc.grid(row=1, column=1, padx=5, pady=4, sticky="w")
 
-        # 구분 여백
+        # 구분선
         ttk.Separator(input_frame, orient="horizontal").grid(row=2, column=0, columnspan=3, sticky="ew", pady=6)
 
         # 3 & 4. 원본 파일 설정 (ddst, fdst)
@@ -87,7 +87,7 @@ class FileMatcherApp:
         self.notebook.add(self.tab_dst, text=" 원본 파일 결과 (0) ")
         self.create_dst_tab()
 
-        # 탭 3: 매칭 결과 리스트
+        # 탭 3: 매칭 결과 리스트 (Treeview 계층 표시 지원)
         self.tab_match = ttk.Frame(self.notebook, padding=5)
         self.notebook.add(self.tab_match, text=" 매칭 결과 (0) ")
         self.create_match_tab()
@@ -97,12 +97,12 @@ class FileMatcherApp:
         self.notebook.add(self.tab_log, text=" 작업 로그 ")
         self.create_log_tab()
 
-    def create_treeview_with_scrollbars(self, parent, columns):
+    def create_treeview_with_scrollbars(self, parent, columns, show="headings"):
         """Treeview와 수평/수직 스크롤바를 포함하는 프레임을 생성합니다."""
         frame = ttk.Frame(parent)
         frame.pack(fill="both", expand=True)
 
-        tree = ttk.Treeview(frame, columns=columns, show="headings", selectmode="browse")
+        tree = ttk.Treeview(frame, columns=columns, show=show, selectmode="browse")
         vsb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
         hsb = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
         tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
@@ -113,21 +113,30 @@ class FileMatcherApp:
 
         return frame, tree
 
-    def setup_tree_columns(self, tree, col_defs):
+    def setup_tree_columns(self, tree, col_defs, tree_col_def=None):
         """컬럼 너비, 정렬 및 정렬 이벤트를 설정합니다."""
+        if tree_col_def:
+            col_name, width, anchor = tree_col_def
+            tree.heading("#0", text=col_name, command=lambda: self.sort_treeview_column(tree, "#0", False))
+            tree.column("#0", width=width, anchor=anchor)
+
         for col_id, col_name, width, anchor in col_defs:
             tree.heading(col_id, text=col_name, command=lambda c=col_id: self.sort_treeview_column(tree, c, False))
             tree.column(col_id, width=width, anchor=anchor)
 
     def sort_treeview_column(self, tree, col, reverse):
-        """컬럼 헤더 클릭 시 정렬을 수행합니다."""
-        data_list = [(tree.set(child, col), child) for child in tree.get_children('')]
+        """컬럼 헤더 클릭 시 루트 노드들을 기준으로 정렬을 수행합니다."""
+        if col == "#0":
+            data_list = [(tree.item(child, "text"), child) for child in tree.get_children('')]
+        else:
+            data_list = [(tree.set(child, col), child) for child in tree.get_children('')]
+
         try:
             # 숫자 정렬 시도
-            data_list.sort(key=lambda t: int(t[0].replace(',', '')), reverse=reverse)
-        except ValueError:
+            data_list.sort(key=lambda t: int(str(t[0]).replace(',', '')), reverse=reverse)
+        except (ValueError, TypeError):
             # 문자열 정렬
-            data_list.sort(key=lambda t: t[0].lower(), reverse=reverse)
+            data_list.sort(key=lambda t: str(t[0]).lower(), reverse=reverse)
 
         for idx, (_, item) in enumerate(data_list):
             tree.move(item, '', idx)
@@ -144,7 +153,7 @@ class FileMatcherApp:
             ("dir", "디렉토리 위치", 200, "w"),
             ("full_path", "전체 파일 경로", 350, "w")
         ]
-        _, self.tree_src = self.create_treeview_with_scrollbars(self.tab_src, [c[0] for c in col_defs])
+        _, self.tree_src = self.create_treeview_with_scrollbars(self.tab_src, [c[0] for c in col_defs], show="headings")
         self.setup_tree_columns(self.tree_src, col_defs)
         self.tree_src.bind("<Double-1>", lambda event: self.open_in_explorer(self.tree_src, "full_path"))
 
@@ -166,7 +175,7 @@ class FileMatcherApp:
             ("dir", "디렉토리 위치", 200, "w"),
             ("full_path", "전체 파일 경로", 350, "w")
         ]
-        _, self.tree_dst = self.create_treeview_with_scrollbars(self.tab_dst, [c[0] for c in col_defs])
+        _, self.tree_dst = self.create_treeview_with_scrollbars(self.tab_dst, [c[0] for c in col_defs], show="headings")
         self.setup_tree_columns(self.tree_dst, col_defs)
         self.tree_dst.bind("<Double-1>", lambda event: self.open_in_explorer(self.tree_dst, "full_path"))
 
@@ -180,24 +189,54 @@ class FileMatcherApp:
 
     def create_match_tab(self):
         col_defs = [
-            ("no", "번호", 50, "center"),
-            ("sha1", "SHA-1 해시", 300, "center"),
-            ("src_filename", "배포 파일명", 160, "w"),
-            ("dst_filename", "원본 파일명", 160, "w"),
+            ("match_type", "매칭 구분", 130, "center"),
+            ("sha1", "SHA-1 해시", 290, "center"),
             ("src_path", "배포본 전체 경로", 320, "w"),
-            ("dst_path", "원본 전체 경로", 320, "w")
+            ("dst_path", "원본 전체 경로", 350, "w")
         ]
-        _, self.tree_match = self.create_treeview_with_scrollbars(self.tab_match, [c[0] for c in col_defs])
-        self.setup_tree_columns(self.tree_match, col_defs)
-        self.tree_match.bind("<Double-1>", lambda event: self.open_in_explorer(self.tree_match, "src_path"))
+        tree_col_def = ("배포 파일명 / 매칭 원본 파일", 300, "w")
+
+        # 트리 계층(#0) 및 헤더 활성화
+        _, self.tree_match = self.create_treeview_with_scrollbars(
+            self.tab_match, [c[0] for c in col_defs], show=("tree", "headings")
+        )
+        self.setup_tree_columns(self.tree_match, col_defs, tree_col_def=tree_col_def)
+
+        # 계층 스타일 태그 설정
+        self.tree_match.tag_configure('multi_parent', background='#EBF3FB', font=("맑은 고딕", 9, "bold"))
+        self.tree_match.tag_configure('multi_child', background='#F9FAFB')
+        self.tree_match.tag_configure('single_match', background='#FFFFFF')
+
+        self.tree_match.bind("<Double-1>", self.on_match_double_click)
 
         # 하단 바
         bottom_bar = ttk.Frame(self.tab_match, padding=(0, 6, 0, 0))
         bottom_bar.pack(fill="x")
-        self.lbl_match_count = ttk.Label(bottom_bar, text="총 0개 일치 파일 쌍 (항목 더블클릭 시 배포본 탐색기 열기)")
+
+        self.lbl_match_count = ttk.Label(
+            bottom_bar,
+            text="총 0개 일치 (항목 더블클릭 시 해당 파일 탐색기 열기)"
+        )
         self.lbl_match_count.pack(side="left")
+
         btn_export = ttk.Button(bottom_bar, text="매칭 결과 CSV 내보내기", command=lambda: self.export_csv("match"))
-        btn_export.pack(side="right")
+        btn_export.pack(side="right", padx=(5, 0))
+
+        btn_collapse = ttk.Button(bottom_bar, text="모두 접기", command=self.collapse_all_match)
+        btn_collapse.pack(side="right", padx=2)
+
+        btn_expand = ttk.Button(bottom_bar, text="모두 펼치기", command=self.expand_all_match)
+        btn_expand.pack(side="right", padx=2)
+
+    def expand_all_match(self):
+        """매칭 트리의 모든 다수 매칭 노드를 펼칩니다."""
+        for item in self.tree_match.get_children(''):
+            self.tree_match.item(item, open=True)
+
+    def collapse_all_match(self):
+        """매칭 트리의 모든 다수 매칭 노드를 접습니다."""
+        for item in self.tree_match.get_children(''):
+            self.tree_match.item(item, open=False)
 
     def create_log_tab(self):
         frame = ttk.Frame(self.tab_log)
@@ -220,11 +259,42 @@ class FileMatcherApp:
         if col_key in cols:
             idx = cols.index(col_key)
             filepath = values[idx]
-            if os.path.exists(filepath):
-                norm_path = os.path.normpath(filepath)
-                subprocess.Popen(f'explorer /select,"{norm_path}"')
+            self.open_file_path_in_explorer(filepath)
+
+    def on_match_double_click(self, event):
+        """매칭 트리 항목 더블클릭 시 파일 위치를 엽니다."""
+        selected_item = self.tree_match.selection()
+        if not selected_item:
+            return
+        item_id = selected_item[0]
+        values = self.tree_match.item(item_id, "values")
+        parent_id = self.tree_match.parent(item_id)
+
+        if not values or len(values) < 4:
+            return
+
+        src_path = values[2]
+        dst_path = values[3]
+
+        if parent_id:
+            # 다수 매칭 자식 노드 -> 원본 파일 우선 열기
+            target = dst_path if os.path.exists(dst_path) else src_path
+        else:
+            # 부모 노드 또는 1:1 매칭 노드
+            if "1:1" in values[0]:
+                target = dst_path if os.path.exists(dst_path) else src_path
             else:
-                messagebox.showwarning("경고", f"해당 경로의 파일을 찾을 수 없습니다:\n{filepath}")
+                # 1:N 매칭 부모 노드 -> 배포본 파일 열기
+                target = src_path
+
+        self.open_file_path_in_explorer(target)
+
+    def open_file_path_in_explorer(self, filepath):
+        if filepath and os.path.exists(filepath):
+            norm_path = os.path.normpath(filepath)
+            subprocess.Popen(f'explorer /select,"{norm_path}"')
+        else:
+            messagebox.showwarning("경고", f"해당 경로의 파일을 찾을 수 없습니다:\n{filepath}")
 
     def browse_dsrc(self):
         directory = filedialog.askdirectory()
@@ -348,7 +418,7 @@ class FileMatcherApp:
         self.btn_export_all.config(state="disabled")
 
         try:
-            # 1. 배포 파일 처리 (5 ~ 7)
+            # 1. 배포 파일 처리
             self.notebook.select(0)
             self.set_status("배포 파일 검색 및 해시 계산 중...")
             self.src_files = self.find_and_process_files(
@@ -356,7 +426,7 @@ class FileMatcherApp:
             )
             self.notebook.tab(0, text=f" 배포 파일 결과 ({len(self.src_files)}) ")
 
-            # 2. 원본 파일 처리 (8 ~ 10)
+            # 2. 원본 파일 처리
             self.notebook.select(1)
             self.set_status("원본 파일 검색 및 해시 계산 중...")
             self.dst_files = self.find_and_process_files(
@@ -364,7 +434,7 @@ class FileMatcherApp:
             )
             self.notebook.tab(1, text=f" 원본 파일 결과 ({len(self.dst_files)}) ")
 
-            # 3. SHA-1 비교 및 매칭 (11)
+            # 3. SHA-1 비교 및 매칭 (Treeview 계층 반영)
             self.notebook.select(2)
             self.set_status("SHA-1 해시 매칭 비교 중...")
             self.log("\n" + "=" * 25 + " SHA-1 매칭 결과 " + "=" * 25)
@@ -373,56 +443,120 @@ class FileMatcherApp:
             for dst in self.dst_files:
                 dst_dict.setdefault(dst['sha1'], []).append(dst)
 
-            match_count = 0
+            match_pair_count = 0
+            matched_src_count = 0
+            multi_match_count = 0
+
             for src in self.src_files:
                 sha1 = src['sha1']
                 if sha1 in dst_dict:
-                    for matched_dst in dst_dict[sha1]:
-                        match_count += 1
+                    matched_dst_list = dst_dict[sha1]
+                    matched_src_count += 1
+                    num_dsts = len(matched_dst_list)
+
+                    if num_dsts == 1:
+                        # 1:1 매칭: 단일 행 표시
+                        dst = matched_dst_list[0]
+                        match_pair_count += 1
                         match_item = {
-                            'no': match_count,
+                            'no': match_pair_count,
+                            'match_type': '1:1 매칭',
                             'sha1': sha1,
                             'src_filename': src['filename'],
-                            'dst_filename': matched_dst['filename'],
+                            'dst_filename': dst['filename'],
                             'src_path': src['full_path'],
-                            'dst_path': matched_dst['full_path']
+                            'dst_path': dst['full_path']
                         }
                         self.matched_files.append(match_item)
 
                         self.tree_match.insert(
                             "",
                             tk.END,
+                            text=f"[배포] {src['filename']} → {dst['filename']}",
                             values=(
-                                match_count,
+                                "1:1 매칭",
                                 sha1,
-                                src['filename'],
-                                matched_dst['filename'],
                                 src['full_path'],
-                                matched_dst['full_path']
-                            )
+                                dst['full_path']
+                            ),
+                            tags=('single_match',)
                         )
 
-                        self.log(f"[{match_count}] 동일 파일 발견 (SHA-1: {sha1})")
+                        self.log(f"[1:1 매칭] {src['filename']} == {dst['filename']} (SHA-1: {sha1})")
                         self.log(f"  - 배포본: {src['full_path']}")
-                        self.log(f"  - 원본  : {matched_dst['full_path']}")
+                        self.log(f"  - 원본  : {dst['full_path']}")
                         self.log("-" * 60)
 
-            self.lbl_match_count.config(text=f"총 {match_count}개 일치 파일 쌍 (항목 더블클릭 시 배포본 탐색기 열기)")
-            self.notebook.tab(2, text=f" 매칭 결과 ({match_count}) ")
+                    else:
+                        # 1:N 매칭: 배포 파일이 부모 노드, 원본 파일들이 자식 노드로 Treeview 계층 표시
+                        multi_match_count += 1
+                        parent_id = self.tree_match.insert(
+                            "",
+                            tk.END,
+                            text=f"[배포] {src['filename']} (원본 {num_dsts}개 일치)",
+                            values=(
+                                f"1:N 매칭 ({num_dsts}개)",
+                                sha1,
+                                src['full_path'],
+                                f"하위 {num_dsts}개 원본 파일 확인"
+                            ),
+                            open=True,  # 기본으로 트리 펼침
+                            tags=('multi_parent',)
+                        )
 
-            if match_count == 0:
+                        self.log(f"[1:N 다수 매칭 ({num_dsts}개)] 배포 파일: {src['filename']} (SHA-1: {sha1})")
+                        self.log(f"  - 배포본 위치: {src['full_path']}")
+
+                        for idx, dst in enumerate(matched_dst_list, start=1):
+                            match_pair_count += 1
+                            match_item = {
+                                'no': match_pair_count,
+                                'match_type': f"1:N 매칭 ({idx}/{num_dsts})",
+                                'sha1': sha1,
+                                'src_filename': src['filename'],
+                                'dst_filename': dst['filename'],
+                                'src_path': src['full_path'],
+                                'dst_path': dst['full_path']
+                            }
+                            self.matched_files.append(match_item)
+
+                            self.tree_match.insert(
+                                parent_id,
+                                tk.END,
+                                text=f"  └ [원본 #{idx}] {dst['filename']}",
+                                values=(
+                                    f"일치 원본 #{idx}",
+                                    sha1,
+                                    src['full_path'],
+                                    dst['full_path']
+                                ),
+                                tags=('multi_child',)
+                            )
+
+                            self.log(f"    ({idx}) {dst['filename']} | {dst['full_path']}")
+                        self.log("-" * 60)
+
+            self.lbl_match_count.config(
+                text=f"매칭 배포파일: {matched_src_count}개 (1:1: {matched_src_count - multi_match_count}개, 1:N 다수: {multi_match_count}개) / 원본 매칭 쌍: {match_pair_count}개"
+            )
+            self.notebook.tab(2, text=f" 매칭 결과 ({matched_src_count}) ")
+
+            if matched_src_count == 0:
                 self.log("SHA-1 해시 값이 일치하는 파일을 찾지 못했습니다.")
                 self.set_status("매칭 완료: 일치 파일 없음")
             else:
-                self.log(f"총 {match_count}개의 파일 쌍을 매칭했습니다.")
-                self.set_status(f"매칭 완료: {match_count}쌍 일치 (배포: {len(self.src_files)}개, 원본: {len(self.dst_files)}개)")
+                self.log(f"총 {matched_src_count}개 배포파일(총 {match_pair_count}개 쌍)을 매칭했습니다.")
+                self.set_status(f"매칭 완료: 배포파일 {matched_src_count}개 일치 (1:N 다수 매칭: {multi_match_count}개)")
 
             messagebox.showinfo(
                 "완료",
                 f"매칭 작업이 완료되었습니다!\n\n"
-                f"- 배포 파일: {len(self.src_files)}개\n"
-                f"- 원본 파일: {len(self.dst_files)}개\n"
-                f"- 일치 파일 쌍: {match_count}개"
+                f"- 배포 파일 총수: {len(self.src_files)}개\n"
+                f"- 원본 파일 총수: {len(self.dst_files)}개\n"
+                f"- 매칭된 배포 파일: {matched_src_count}개\n"
+                f"  └ 1:1 단일 매칭: {matched_src_count - multi_match_count}개\n"
+                f"  └ 1:N 다수 매칭: {multi_match_count}개 (Treeview 계층 표시)\n"
+                f"- 매칭된 전체 파일 쌍: {match_pair_count}쌍"
             )
 
         except Exception as e:
@@ -452,8 +586,8 @@ class FileMatcherApp:
             data = self.matched_files
             title = "매칭 결과"
             default_name = f"매칭결과_{timestamp}.csv"
-            headers = ["번호", "SHA-1", "배포 파일명", "원본 파일명", "배포본 전체 경로", "원본 전체 경로"]
-            keys = ['no', 'sha1', 'src_filename', 'dst_filename', 'src_path', 'dst_path']
+            headers = ["번호", "매칭 구분", "SHA-1", "배포 파일명", "원본 파일명", "배포본 전체 경로", "원본 전체 경로"]
+            keys = ['no', 'match_type', 'sha1', 'src_filename', 'dst_filename', 'src_path', 'dst_path']
         else:
             return
 
@@ -523,8 +657,8 @@ class FileMatcherApp:
             # 3. 매칭 결과 CSV
             if self.matched_files:
                 path = os.path.join(save_dir, f"3_매칭결과_{timestamp}.csv")
-                headers = ["번호", "SHA-1", "배포 파일명", "원본 파일명", "배포본 전체 경로", "원본 전체 경로"]
-                keys = ['no', 'sha1', 'src_filename', 'dst_filename', 'src_path', 'dst_path']
+                headers = ["번호", "매칭 구분", "SHA-1", "배포 파일명", "원본 파일명", "배포본 전체 경로", "원본 전체 경로"]
+                keys = ['no', 'match_type', 'sha1', 'src_filename', 'dst_filename', 'src_path', 'dst_path']
                 with open(path, mode='w', newline='', encoding='utf-8-sig') as f:
                     writer = csv.writer(f)
                     writer.writerow(headers)
@@ -543,4 +677,5 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = FileMatcherApp(root)
     root.mainloop()
+
 
