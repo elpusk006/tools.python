@@ -1,85 +1,546 @@
-import hashlib
+import csv
+from datetime import datetime
 import fnmatch
+import hashlib
 import os
+import subprocess
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
 
-def calculate_sha1(file_path):
-    """파일의 SHA-1 해시 값을 계산합니다. (대용량 파일 고려)"""
-    sha1 = hashlib.sha1()
-    try:
-        with open(file_path, 'rb') as f:
-            while chunk := f.read(8192):
-                sha1.update(chunk)
-        return sha1.hexdigest()
-    except (PermissionError, FileNotFoundError):
-        return None
 
-def find_files(directory, pattern):
-    """지정된 디렉토리 및 하위 디렉토리에서 패턴과 일치하는 파일을 찾습니다."""
-    matched_files = []
-    for root, dirs, files in os.walk(directory):
-        for filename in fnmatch.filter(files, pattern):
-            full_path = os.path.join(root, filename)
-            name, ext = os.path.splitext(filename)
-            matched_files.append({
-                'full_path': full_path,
-                'path': root,
-                'name': name,
-                'ext': ext
-            })
-    return matched_files
+class FileMatcherApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("배포본 - 원본 파일 매칭 프로그램")
+        self.root.geometry("1050x750")
+        self.root.minsize(850, 600)
 
-def process_directory_files(directory, pattern, dir_label):
-    """디렉토리 내 파일을 찾고, SHA-1을 계산하여 정보를 출력 및 반환합니다."""
-    print(f"\n--- [{dir_label}] 파일 검색 및 해시 계산 시작 ---")
-    files_info = find_files(directory, pattern)
-    
-    valid_files = []
-    for f in files_info:
-        sha1_val = calculate_sha1(f['full_path'])
-        if sha1_val:
-            f['sha1'] = sha1_val
-            valid_files.append(f)
-            print(f"위치: {f['path']}")
-            print(f"파일명: {f['name']}{f['ext']} (이름: {f['name']}, 확장자: {f['ext']})")
-            print(f"SHA-1: {sha1_val}")
-            print("-" * 50)
-            
-    return valid_files
+        # UI 스타일 설정
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.configure("Treeview.Heading", font=("맑은 고딕", 9, "bold"))
+        style.configure("Treeview", font=("맑은 고딕", 9), rowheight=24)
 
-def main():
-    # 1 ~ 4. 사용자 입력 받기 (2번 항목은 문맥상 fsrc로 판단하여 처리했습니다)
-    dsrc = input("1. 배포 파일 디렉토리 위치(dsrc) 입력: ").strip()
-    fsrc = input("2. 배포 파일명 형식(fsrc, 예: *.bin) 입력: ").strip()
-    ddst = input("3. 원본 파일 디렉토리 위치(ddst) 입력: ").strip()
-    fdst = input("4. 원본 파일명 형식(fdst, 예: *.bin) 입력: ").strip()
+        # 데이터 저장소
+        self.src_files = []
+        self.dst_files = []
+        self.matched_files = []
 
-    # 5 ~ 7. 배포 파일 처리
-    src_files = process_directory_files(dsrc, fsrc, "배포(src)")
+        self.create_widgets()
 
-    # 8 ~ 10. 원본 파일 처리
-    dst_files = process_directory_files(ddst, fdst, "원본(dst)")
+    def create_widgets(self):
+        # --- 입력 영역 프레임 ---
+        input_frame = ttk.LabelFrame(self.root, text=" 설정 및 경로 입력 ", padding=10)
+        input_frame.pack(fill="x", padx=15, pady=8)
 
-    # 11. SHA-1 매칭 및 결과 표시
-    print("\n" + "=" * 20 + " SHA-1 매칭 결과 " + "=" * 20)
-    
-    # 빠른 비교를 위해 원본 파일을 SHA-1 기준으로 그룹화
-    dst_dict = {}
-    for dst in dst_files:
-        dst_dict.setdefault(dst['sha1'], []).append(dst['full_path'])
+        # 1 & 2. 배포 파일 설정 (dsrc, fsrc)
+        ttk.Label(input_frame, text="1. 배포 디렉토리 (dsrc):").grid(row=0, column=0, sticky="w", pady=4)
+        self.entry_dsrc = ttk.Entry(input_frame, width=50)
+        self.entry_dsrc.grid(row=0, column=1, padx=5, pady=4, sticky="ew")
+        ttk.Button(input_frame, text="찾아보기...", command=self.browse_dsrc).grid(row=0, column=2, padx=5, pady=4)
 
-    match_count = 0
-    for src in src_files:
-        sha1 = src['sha1']
-        if sha1 in dst_dict:
-            for matched_dst_path in dst_dict[sha1]:
-                match_count += 1
-                print(f"[{match_count}] 동일 파일 발견 (SHA-1: {sha1})")
-                print(f"  - 배포본 위치: {src['full_path']}")
-                print(f"  - 원본 위치  : {matched_dst_path}")
-                print("-" * 50)
+        ttk.Label(input_frame, text="2. 배포 파일 형식 (fsrc):").grid(row=1, column=0, sticky="w", pady=4)
+        self.entry_fsrc = ttk.Entry(input_frame, width=20)
+        self.entry_fsrc.insert(0, "*.bin")
+        self.entry_fsrc.grid(row=1, column=1, padx=5, pady=4, sticky="w")
 
-    if match_count == 0:
-        print("SHA-1 해시 값이 일치하는 파일을 찾지 못했습니다.")
+        # 구분 여백
+        ttk.Separator(input_frame, orient="horizontal").grid(row=2, column=0, columnspan=3, sticky="ew", pady=6)
+
+        # 3 & 4. 원본 파일 설정 (ddst, fdst)
+        ttk.Label(input_frame, text="3. 원본 디렉토리 (ddst):").grid(row=3, column=0, sticky="w", pady=4)
+        self.entry_ddst = ttk.Entry(input_frame, width=50)
+        self.entry_ddst.grid(row=3, column=1, padx=5, pady=4, sticky="ew")
+        ttk.Button(input_frame, text="찾아보기...", command=self.browse_ddst).grid(row=3, column=2, padx=5, pady=4)
+
+        ttk.Label(input_frame, text="4. 원본 파일 형식 (fdst):").grid(row=4, column=0, sticky="w", pady=4)
+        self.entry_fdst = ttk.Entry(input_frame, width=20)
+        self.entry_fdst.insert(0, "*.bin")
+        self.entry_fdst.grid(row=4, column=1, padx=5, pady=4, sticky="w")
+
+        input_frame.columnconfigure(1, weight=1)
+
+        # --- 제어 버튼 및 상태 영역 ---
+        btn_bar = ttk.Frame(self.root, padding=(15, 4))
+        btn_bar.pack(fill="x")
+
+        self.btn_run = ttk.Button(btn_bar, text="▶ 검색 및 SHA-1 비교 시작", command=self.run_matching)
+        self.btn_run.pack(side="left", padx=(0, 10))
+
+        self.btn_export_all = ttk.Button(btn_bar, text="모든 결과 CSV 일괄 저장", command=self.export_all_csv)
+        self.btn_export_all.pack(side="left", padx=5)
+
+        self.lbl_status = ttk.Label(btn_bar, text="준비됨", foreground="#555555")
+        self.lbl_status.pack(side="right", padx=5)
+
+        # --- 탭(Notebook) 결과 영역 ---
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill="both", expand=True, padx=15, pady=(5, 10))
+
+        # 탭 1: 배포 파일 작업 결과 리스트
+        self.tab_src = ttk.Frame(self.notebook, padding=5)
+        self.notebook.add(self.tab_src, text=" 배포 파일 결과 (0) ")
+        self.create_src_tab()
+
+        # 탭 2: 원본 파일 작업 결과 리스트
+        self.tab_dst = ttk.Frame(self.notebook, padding=5)
+        self.notebook.add(self.tab_dst, text=" 원본 파일 결과 (0) ")
+        self.create_dst_tab()
+
+        # 탭 3: 매칭 결과 리스트
+        self.tab_match = ttk.Frame(self.notebook, padding=5)
+        self.notebook.add(self.tab_match, text=" 매칭 결과 (0) ")
+        self.create_match_tab()
+
+        # 탭 4: 상세 로그
+        self.tab_log = ttk.Frame(self.notebook, padding=5)
+        self.notebook.add(self.tab_log, text=" 작업 로그 ")
+        self.create_log_tab()
+
+    def create_treeview_with_scrollbars(self, parent, columns):
+        """Treeview와 수평/수직 스크롤바를 포함하는 프레임을 생성합니다."""
+        frame = ttk.Frame(parent)
+        frame.pack(fill="both", expand=True)
+
+        tree = ttk.Treeview(frame, columns=columns, show="headings", selectmode="browse")
+        vsb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+        hsb = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        vsb.pack(side="right", fill="y")
+        hsb.pack(side="bottom", fill="x")
+        tree.pack(side="left", fill="both", expand=True)
+
+        return frame, tree
+
+    def setup_tree_columns(self, tree, col_defs):
+        """컬럼 너비, 정렬 및 정렬 이벤트를 설정합니다."""
+        for col_id, col_name, width, anchor in col_defs:
+            tree.heading(col_id, text=col_name, command=lambda c=col_id: self.sort_treeview_column(tree, c, False))
+            tree.column(col_id, width=width, anchor=anchor)
+
+    def sort_treeview_column(self, tree, col, reverse):
+        """컬럼 헤더 클릭 시 정렬을 수행합니다."""
+        data_list = [(tree.set(child, col), child) for child in tree.get_children('')]
+        try:
+            # 숫자 정렬 시도
+            data_list.sort(key=lambda t: int(t[0].replace(',', '')), reverse=reverse)
+        except ValueError:
+            # 문자열 정렬
+            data_list.sort(key=lambda t: t[0].lower(), reverse=reverse)
+
+        for idx, (_, item) in enumerate(data_list):
+            tree.move(item, '', idx)
+
+        tree.heading(col, command=lambda: self.sort_treeview_column(tree, col, not reverse))
+
+    def create_src_tab(self):
+        col_defs = [
+            ("no", "번호", 50, "center"),
+            ("filename", "파일명", 180, "w"),
+            ("ext", "확장자", 65, "center"),
+            ("size", "크기 (Bytes)", 95, "e"),
+            ("sha1", "SHA-1 해시", 300, "center"),
+            ("dir", "디렉토리 위치", 200, "w"),
+            ("full_path", "전체 파일 경로", 350, "w")
+        ]
+        _, self.tree_src = self.create_treeview_with_scrollbars(self.tab_src, [c[0] for c in col_defs])
+        self.setup_tree_columns(self.tree_src, col_defs)
+        self.tree_src.bind("<Double-1>", lambda event: self.open_in_explorer(self.tree_src, "full_path"))
+
+        # 하단 바
+        bottom_bar = ttk.Frame(self.tab_src, padding=(0, 6, 0, 0))
+        bottom_bar.pack(fill="x")
+        self.lbl_src_count = ttk.Label(bottom_bar, text="총 0개 파일 (항목 더블클릭 시 탐색기 위치 열기)")
+        self.lbl_src_count.pack(side="left")
+        btn_export = ttk.Button(bottom_bar, text="배포 파일 목록 CSV 내보내기", command=lambda: self.export_csv("src"))
+        btn_export.pack(side="right")
+
+    def create_dst_tab(self):
+        col_defs = [
+            ("no", "번호", 50, "center"),
+            ("filename", "파일명", 180, "w"),
+            ("ext", "확장자", 65, "center"),
+            ("size", "크기 (Bytes)", 95, "e"),
+            ("sha1", "SHA-1 해시", 300, "center"),
+            ("dir", "디렉토리 위치", 200, "w"),
+            ("full_path", "전체 파일 경로", 350, "w")
+        ]
+        _, self.tree_dst = self.create_treeview_with_scrollbars(self.tab_dst, [c[0] for c in col_defs])
+        self.setup_tree_columns(self.tree_dst, col_defs)
+        self.tree_dst.bind("<Double-1>", lambda event: self.open_in_explorer(self.tree_dst, "full_path"))
+
+        # 하단 바
+        bottom_bar = ttk.Frame(self.tab_dst, padding=(0, 6, 0, 0))
+        bottom_bar.pack(fill="x")
+        self.lbl_dst_count = ttk.Label(bottom_bar, text="총 0개 파일 (항목 더블클릭 시 탐색기 위치 열기)")
+        self.lbl_dst_count.pack(side="left")
+        btn_export = ttk.Button(bottom_bar, text="원본 파일 목록 CSV 내보내기", command=lambda: self.export_csv("dst"))
+        btn_export.pack(side="right")
+
+    def create_match_tab(self):
+        col_defs = [
+            ("no", "번호", 50, "center"),
+            ("sha1", "SHA-1 해시", 300, "center"),
+            ("src_filename", "배포 파일명", 160, "w"),
+            ("dst_filename", "원본 파일명", 160, "w"),
+            ("src_path", "배포본 전체 경로", 320, "w"),
+            ("dst_path", "원본 전체 경로", 320, "w")
+        ]
+        _, self.tree_match = self.create_treeview_with_scrollbars(self.tab_match, [c[0] for c in col_defs])
+        self.setup_tree_columns(self.tree_match, col_defs)
+        self.tree_match.bind("<Double-1>", lambda event: self.open_in_explorer(self.tree_match, "src_path"))
+
+        # 하단 바
+        bottom_bar = ttk.Frame(self.tab_match, padding=(0, 6, 0, 0))
+        bottom_bar.pack(fill="x")
+        self.lbl_match_count = ttk.Label(bottom_bar, text="총 0개 일치 파일 쌍 (항목 더블클릭 시 배포본 탐색기 열기)")
+        self.lbl_match_count.pack(side="left")
+        btn_export = ttk.Button(bottom_bar, text="매칭 결과 CSV 내보내기", command=lambda: self.export_csv("match"))
+        btn_export.pack(side="right")
+
+    def create_log_tab(self):
+        frame = ttk.Frame(self.tab_log)
+        frame.pack(fill="both", expand=True)
+
+        self.txt_output = tk.Text(frame, wrap="word", font=("Consolas", 9))
+        scrollbar = ttk.Scrollbar(frame, command=self.txt_output.yview)
+        self.txt_output.configure(yscrollcommand=scrollbar.set)
+
+        scrollbar.pack(side="right", fill="y")
+        self.txt_output.pack(side="left", fill="both", expand=True)
+
+    def open_in_explorer(self, tree, col_key):
+        """선택된 항목의 파일 위치를 윈도우 탐색기에서 엽니다."""
+        selected_item = tree.selection()
+        if not selected_item:
+            return
+        values = tree.item(selected_item[0], "values")
+        cols = tree["columns"]
+        if col_key in cols:
+            idx = cols.index(col_key)
+            filepath = values[idx]
+            if os.path.exists(filepath):
+                norm_path = os.path.normpath(filepath)
+                subprocess.Popen(f'explorer /select,"{norm_path}"')
+            else:
+                messagebox.showwarning("경고", f"해당 경로의 파일을 찾을 수 없습니다:\n{filepath}")
+
+    def browse_dsrc(self):
+        directory = filedialog.askdirectory()
+        if directory:
+            self.entry_dsrc.delete(0, tk.END)
+            self.entry_dsrc.insert(0, directory)
+
+    def browse_ddst(self):
+        directory = filedialog.askdirectory()
+        if directory:
+            self.entry_ddst.delete(0, tk.END)
+            self.entry_ddst.insert(0, directory)
+
+    def log(self, text):
+        """로그 탭 텍스트 창에 로그를 출력합니다."""
+        self.txt_output.insert(tk.END, text + "\n")
+        self.txt_output.see(tk.END)
+        self.root.update_idletasks()
+
+    def set_status(self, text):
+        self.lbl_status.config(text=text)
+        self.root.update_idletasks()
+
+    def calculate_sha1(self, file_path):
+        sha1 = hashlib.sha1()
+        try:
+            with open(file_path, 'rb') as f:
+                while chunk := f.read(65536):
+                    sha1.update(chunk)
+            return sha1.hexdigest()
+        except (PermissionError, FileNotFoundError, OSError):
+            return None
+
+    def find_and_process_files(self, directory, pattern, label, tree_widget, count_label):
+        self.log(f"\n--- [{label}] 파일 검색 및 해시 계산 시작 ({directory}) ---")
+        matched_files = []
+        count = 0
+
+        for root, dirs, files in os.walk(directory):
+            for filename in fnmatch.filter(files, pattern):
+                full_path = os.path.join(root, filename)
+                name, ext = os.path.splitext(filename)
+                try:
+                    file_size = os.path.getsize(full_path)
+                except OSError:
+                    file_size = 0
+
+                sha1_val = self.calculate_sha1(full_path)
+                if sha1_val:
+                    count += 1
+                    file_item = {
+                        'no': count,
+                        'filename': filename,
+                        'name': name,
+                        'ext': ext,
+                        'size': file_size,
+                        'sha1': sha1_val,
+                        'dir': root,
+                        'full_path': full_path
+                    }
+                    matched_files.append(file_item)
+
+                    # UI Treeview에 즉시 항목 추가
+                    tree_widget.insert(
+                        "",
+                        tk.END,
+                        values=(
+                            count,
+                            filename,
+                            ext,
+                            f"{file_size:,}",
+                            sha1_val,
+                            root,
+                            full_path
+                        )
+                    )
+
+                    self.log(f"[{count}] {filename} ({ext}) | SHA-1: {sha1_val} | 위치: {root}")
+
+                    if count % 10 == 0:
+                        count_label.config(text=f"검색 진행 중: {count}개 발견...")
+                        self.set_status(f"{label} 처리 중: {count}개...")
+                        self.root.update_idletasks()
+
+        count_label.config(text=f"총 {count}개 파일 (항목 더블클릭 시 탐색기 위치 열기)")
+        self.log(f"[{label}] 총 {count}개 파일 처리 완료.")
+        return matched_files
+
+    def run_matching(self):
+        dsrc = self.entry_dsrc.get().strip()
+        fsrc = self.entry_fsrc.get().strip()
+        ddst = self.entry_ddst.get().strip()
+        fdst = self.entry_fdst.get().strip()
+
+        if not dsrc or not ddst:
+            messagebox.showwarning("경고", "배포 디렉토리와 원본 디렉토리 경로를 모두 입력해주세요.")
+            return
+
+        if not os.path.exists(dsrc) or not os.path.exists(ddst):
+            messagebox.showerror("에러", "존재하지 않는 디렉토리 경로가 있습니다.")
+            return
+
+        # UI 초기화 및 비활성화
+        self.txt_output.delete("1.0", tk.END)
+        for item in self.tree_src.get_children():
+            self.tree_src.delete(item)
+        for item in self.tree_dst.get_children():
+            self.tree_dst.delete(item)
+        for item in self.tree_match.get_children():
+            self.tree_match.delete(item)
+
+        self.src_files.clear()
+        self.dst_files.clear()
+        self.matched_files.clear()
+
+        self.notebook.tab(0, text=" 배포 파일 결과 (0) ")
+        self.notebook.tab(1, text=" 원본 파일 결과 (0) ")
+        self.notebook.tab(2, text=" 매칭 결과 (0) ")
+
+        self.btn_run.config(state="disabled")
+        self.btn_export_all.config(state="disabled")
+
+        try:
+            # 1. 배포 파일 처리 (5 ~ 7)
+            self.notebook.select(0)
+            self.set_status("배포 파일 검색 및 해시 계산 중...")
+            self.src_files = self.find_and_process_files(
+                dsrc, fsrc, "배포(src)", self.tree_src, self.lbl_src_count
+            )
+            self.notebook.tab(0, text=f" 배포 파일 결과 ({len(self.src_files)}) ")
+
+            # 2. 원본 파일 처리 (8 ~ 10)
+            self.notebook.select(1)
+            self.set_status("원본 파일 검색 및 해시 계산 중...")
+            self.dst_files = self.find_and_process_files(
+                ddst, fdst, "원본(dst)", self.tree_dst, self.lbl_dst_count
+            )
+            self.notebook.tab(1, text=f" 원본 파일 결과 ({len(self.dst_files)}) ")
+
+            # 3. SHA-1 비교 및 매칭 (11)
+            self.notebook.select(2)
+            self.set_status("SHA-1 해시 매칭 비교 중...")
+            self.log("\n" + "=" * 25 + " SHA-1 매칭 결과 " + "=" * 25)
+
+            dst_dict = {}
+            for dst in self.dst_files:
+                dst_dict.setdefault(dst['sha1'], []).append(dst)
+
+            match_count = 0
+            for src in self.src_files:
+                sha1 = src['sha1']
+                if sha1 in dst_dict:
+                    for matched_dst in dst_dict[sha1]:
+                        match_count += 1
+                        match_item = {
+                            'no': match_count,
+                            'sha1': sha1,
+                            'src_filename': src['filename'],
+                            'dst_filename': matched_dst['filename'],
+                            'src_path': src['full_path'],
+                            'dst_path': matched_dst['full_path']
+                        }
+                        self.matched_files.append(match_item)
+
+                        self.tree_match.insert(
+                            "",
+                            tk.END,
+                            values=(
+                                match_count,
+                                sha1,
+                                src['filename'],
+                                matched_dst['filename'],
+                                src['full_path'],
+                                matched_dst['full_path']
+                            )
+                        )
+
+                        self.log(f"[{match_count}] 동일 파일 발견 (SHA-1: {sha1})")
+                        self.log(f"  - 배포본: {src['full_path']}")
+                        self.log(f"  - 원본  : {matched_dst['full_path']}")
+                        self.log("-" * 60)
+
+            self.lbl_match_count.config(text=f"총 {match_count}개 일치 파일 쌍 (항목 더블클릭 시 배포본 탐색기 열기)")
+            self.notebook.tab(2, text=f" 매칭 결과 ({match_count}) ")
+
+            if match_count == 0:
+                self.log("SHA-1 해시 값이 일치하는 파일을 찾지 못했습니다.")
+                self.set_status("매칭 완료: 일치 파일 없음")
+            else:
+                self.log(f"총 {match_count}개의 파일 쌍을 매칭했습니다.")
+                self.set_status(f"매칭 완료: {match_count}쌍 일치 (배포: {len(self.src_files)}개, 원본: {len(self.dst_files)}개)")
+
+            messagebox.showinfo(
+                "완료",
+                f"매칭 작업이 완료되었습니다!\n\n"
+                f"- 배포 파일: {len(self.src_files)}개\n"
+                f"- 원본 파일: {len(self.dst_files)}개\n"
+                f"- 일치 파일 쌍: {match_count}개"
+            )
+
+        except Exception as e:
+            self.set_status(f"오류 발생: {str(e)}")
+            messagebox.showerror("오류 발생", f"작업 중 오류가 발생했습니다:\n{str(e)}")
+        finally:
+            self.btn_run.config(state="normal")
+            self.btn_export_all.config(state="normal")
+
+    def export_csv(self, list_type):
+        """개별 리스트 데이터를 CSV 파일로 내보냅니다."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        if list_type == "src":
+            data = self.src_files
+            title = "배포 파일 목록"
+            default_name = f"배포파일목록_{timestamp}.csv"
+            headers = ["번호", "파일명", "확장자", "크기(Bytes)", "SHA-1", "디렉토리 위치", "전체 경로"]
+            keys = ['no', 'filename', 'ext', 'size', 'sha1', 'dir', 'full_path']
+        elif list_type == "dst":
+            data = self.dst_files
+            title = "원본 파일 목록"
+            default_name = f"원본파일목록_{timestamp}.csv"
+            headers = ["번호", "파일명", "확장자", "크기(Bytes)", "SHA-1", "디렉토리 위치", "전체 경로"]
+            keys = ['no', 'filename', 'ext', 'size', 'sha1', 'dir', 'full_path']
+        elif list_type == "match":
+            data = self.matched_files
+            title = "매칭 결과"
+            default_name = f"매칭결과_{timestamp}.csv"
+            headers = ["번호", "SHA-1", "배포 파일명", "원본 파일명", "배포본 전체 경로", "원본 전체 경로"]
+            keys = ['no', 'sha1', 'src_filename', 'dst_filename', 'src_path', 'dst_path']
+        else:
+            return
+
+        if not data:
+            messagebox.showwarning("안내", f"내보낼 {title} 데이터가 없습니다.\n먼저 검색 및 비교 작업을 실행해주세요.")
+            return
+
+        save_path = filedialog.asksaveasfilename(
+            title=f"{title} CSV 저장",
+            defaultextension=".csv",
+            initialfile=default_name,
+            filetypes=[("CSV 파일", "*.csv"), ("모든 파일", "*.*")]
+        )
+
+        if not save_path:
+            return
+
+        try:
+            with open(save_path, mode='w', newline='', encoding='utf-8-sig') as f:
+                writer = csv.writer(f)
+                writer.writerow(headers)
+                for item in data:
+                    writer.writerow([item[k] for k in keys])
+
+            messagebox.showinfo("저장 완료", f"{title}가 성공적으로 저장되었습니다:\n{save_path}")
+        except Exception as e:
+            messagebox.showerror("저장 오류", f"CSV 파일 저장 중 오류가 발생했습니다:\n{str(e)}")
+
+    def export_all_csv(self):
+        """배포 파일, 원본 파일, 매칭 결과를 폴더에 각각의 CSV 파일로 일괄 저장합니다."""
+        if not self.src_files and not self.dst_files and not self.matched_files:
+            messagebox.showwarning("안내", "내보낼 데이터가 없습니다.\n먼저 검색 및 비교 작업을 실행해주세요.")
+            return
+
+        save_dir = filedialog.askdirectory(title="CSV 파일들을 일괄 저장할 폴더를 선택하세요")
+        if not save_dir:
+            return
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        exported = []
+
+        try:
+            # 1. 배포 파일 CSV
+            if self.src_files:
+                path = os.path.join(save_dir, f"1_배포파일목록_{timestamp}.csv")
+                headers = ["번호", "파일명", "확장자", "크기(Bytes)", "SHA-1", "디렉토리 위치", "전체 경로"]
+                keys = ['no', 'filename', 'ext', 'size', 'sha1', 'dir', 'full_path']
+                with open(path, mode='w', newline='', encoding='utf-8-sig') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(headers)
+                    for item in self.src_files:
+                        writer.writerow([item[k] for k in keys])
+                exported.append(f"배포 파일 ({len(self.src_files)}건): {os.path.basename(path)}")
+
+            # 2. 원본 파일 CSV
+            if self.dst_files:
+                path = os.path.join(save_dir, f"2_원본파일목록_{timestamp}.csv")
+                headers = ["번호", "파일명", "확장자", "크기(Bytes)", "SHA-1", "디렉토리 위치", "전체 경로"]
+                keys = ['no', 'filename', 'ext', 'size', 'sha1', 'dir', 'full_path']
+                with open(path, mode='w', newline='', encoding='utf-8-sig') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(headers)
+                    for item in self.dst_files:
+                        writer.writerow([item[k] for k in keys])
+                exported.append(f"원본 파일 ({len(self.dst_files)}건): {os.path.basename(path)}")
+
+            # 3. 매칭 결과 CSV
+            if self.matched_files:
+                path = os.path.join(save_dir, f"3_매칭결과_{timestamp}.csv")
+                headers = ["번호", "SHA-1", "배포 파일명", "원본 파일명", "배포본 전체 경로", "원본 전체 경로"]
+                keys = ['no', 'sha1', 'src_filename', 'dst_filename', 'src_path', 'dst_path']
+                with open(path, mode='w', newline='', encoding='utf-8-sig') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(headers)
+                    for item in self.matched_files:
+                        writer.writerow([item[k] for k in keys])
+                exported.append(f"매칭 결과 ({len(self.matched_files)}쌍): {os.path.basename(path)}")
+
+            msg = "다음 CSV 파일들이 성공적으로 생성되었습니다:\n\n" + "\n".join(exported)
+            messagebox.showinfo("일괄 저장 완료", msg)
+
+        except Exception as e:
+            messagebox.showerror("저장 오류", f"일괄 저장 중 오류가 발생했습니다:\n{str(e)}")
+
 
 if __name__ == "__main__":
-    main()
+    root = tk.Tk()
+    app = FileMatcherApp(root)
+    root.mainloop()
+
