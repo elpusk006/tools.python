@@ -218,6 +218,39 @@ class FileMatcherApp:
         ]
         tree_col_def = ("배포 파일명 / 매칭 원본 파일", 300, "w")
 
+        self._all_expanded = True
+
+        # --- 상단 툴바 (원클릭 접기/펼치기 전용 컨트롤) ---
+        top_bar = ttk.Frame(self.tab_match, padding=(0, 2, 0, 6))
+        top_bar.pack(fill="x")
+
+        self.btn_toggle_match_top = ttk.Button(
+            top_bar,
+            text="⊟ 모든 항목 한번에 접기",
+            command=self.toggle_all_match
+        )
+        self.btn_toggle_match_top.pack(side="left", padx=(0, 6))
+
+        btn_top_expand = ttk.Button(
+            top_bar,
+            text="⊞ 모두 펼치기",
+            command=self.expand_all_match
+        )
+        btn_top_expand.pack(side="left", padx=2)
+
+        btn_top_collapse = ttk.Button(
+            top_bar,
+            text="⊟ 모두 접기",
+            command=self.collapse_all_match
+        )
+        btn_top_collapse.pack(side="left", padx=2)
+
+        ttk.Label(
+            top_bar,
+            text="(단축키: Ctrl+E 펼치기 / Ctrl+W 접기 | 우클릭 메뉴 지원)",
+            foreground="#666666"
+        ).pack(side="left", padx=10)
+
         # 트리 계층(#0) 및 헤더 활성화
         _, self.tree_match = self.create_treeview_with_scrollbars(
             self.tab_match, [c[0] for c in col_defs], show=("tree", "headings")
@@ -229,7 +262,21 @@ class FileMatcherApp:
         self.tree_match.tag_configure('multi_child', background='#F9FAFB')
         self.tree_match.tag_configure('single_match', background='#FFFFFF')
 
+        # 이벤트 및 단축키 바인딩
         self.tree_match.bind("<Double-1>", self.on_match_double_click)
+        self.tree_match.bind("<Button-3>", self.show_match_context_menu)
+        self.root.bind("<Control-e>", lambda e: self.expand_all_match())
+        self.root.bind("<Control-E>", lambda e: self.expand_all_match())
+        self.root.bind("<Control-w>", lambda e: self.collapse_all_match())
+        self.root.bind("<Control-W>", lambda e: self.collapse_all_match())
+
+        # 우클릭 컨텍스트 메뉴 생성
+        self.match_context_menu = tk.Menu(self.root, tearoff=0)
+        self.match_context_menu.add_command(label="⊞ 모든 항목 펼치기 (Ctrl+E)", command=self.expand_all_match)
+        self.match_context_menu.add_command(label="⊟ 모든 항목 접기 (Ctrl+W)", command=self.collapse_all_match)
+        self.match_context_menu.add_separator()
+        self.match_context_menu.add_command(label="📁 파일 위치 열기 (탐색기)", command=self.open_selected_match_in_explorer)
+        self.match_context_menu.add_command(label="💾 매칭 결과 CSV 내보내기", command=lambda: self.export_csv("match"))
 
         # 하단 바
         bottom_bar = ttk.Frame(self.tab_match, padding=(0, 6, 0, 0))
@@ -250,15 +297,61 @@ class FileMatcherApp:
         btn_expand = ttk.Button(bottom_bar, text="모두 펼치기", command=self.expand_all_match)
         btn_expand.pack(side="right", padx=2)
 
+        self.btn_toggle_match_bot = ttk.Button(
+            bottom_bar,
+            text="⊟ 한번에 접기",
+            command=self.toggle_all_match
+        )
+        self.btn_toggle_match_bot.pack(side="right", padx=4)
+
+    def set_all_tree_open(self, tree, open_state):
+        """Treeview의 모든 부모/자식 노드를 재귀적으로 펼치거나 접습니다."""
+        def _recurse(item):
+            tree.item(item, open=open_state)
+            for child in tree.get_children(item):
+                _recurse(child)
+
+        for root_item in tree.get_children(''):
+            _recurse(root_item)
+
+    def toggle_all_match(self):
+        """매칭 리스트의 모든 Treeview 항목을 한 번에 접기/펼치기 토글합니다."""
+        self._all_expanded = not getattr(self, '_all_expanded', True)
+        self.set_all_tree_open(self.tree_match, self._all_expanded)
+        self._update_expand_button_labels()
+
     def expand_all_match(self):
-        """매칭 트리의 모든 다수 매칭 노드를 펼칩니다."""
-        for item in self.tree_match.get_children(''):
-            self.tree_match.item(item, open=True)
+        """매칭 트리의 모든 노드를 한 번에 펼칩니다."""
+        self._all_expanded = True
+        self.set_all_tree_open(self.tree_match, True)
+        self._update_expand_button_labels()
 
     def collapse_all_match(self):
-        """매칭 트리의 모든 다수 매칭 노드를 접습니다."""
-        for item in self.tree_match.get_children(''):
-            self.tree_match.item(item, open=False)
+        """매칭 트리의 모든 노드를 한 번에 접습니다."""
+        self._all_expanded = False
+        self.set_all_tree_open(self.tree_match, False)
+        self._update_expand_button_labels()
+
+    def _update_expand_button_labels(self):
+        """접기/펼치기 토글 버튼 라벨을 동기화합니다."""
+        is_exp = getattr(self, '_all_expanded', True)
+        top_text = "⊟ 모든 항목 한번에 접기" if is_exp else "⊞ 모든 항목 한번에 펼치기"
+        bot_text = "⊟ 한번에 접기" if is_exp else "⊞ 한번에 펼치기"
+        if hasattr(self, 'btn_toggle_match_top'):
+            self.btn_toggle_match_top.config(text=top_text)
+        if hasattr(self, 'btn_toggle_match_bot'):
+            self.btn_toggle_match_bot.config(text=bot_text)
+
+    def show_match_context_menu(self, event):
+        """마우스 우클릭 시 컨텍스트 메뉴를 표시합니다."""
+        row_id = self.tree_match.identify_row(event.y)
+        if row_id:
+            self.tree_match.selection_set(row_id)
+        self.match_context_menu.post(event.x_root, event.y_root)
+
+    def open_selected_match_in_explorer(self):
+        """현재 선택된 매칭 항목의 파일을 탐색기에서 엽니다."""
+        self.on_match_double_click(None)
 
     def create_log_tab(self):
         frame = ttk.Frame(self.tab_log)
@@ -523,6 +616,9 @@ class FileMatcherApp:
         self.lbl_src_count.config(text="총 0개 파일 (항목 더블클릭 시 탐색기 위치 열기)")
         self.lbl_dst_count.config(text="총 0개 파일 (항목 더블클릭 시 탐색기 위치 열기)")
         self.lbl_match_count.config(text="총 0개 일치 (항목 더블클릭 시 해당 파일 탐색기 열기)")
+
+        self._all_expanded = True
+        self._update_expand_button_labels()
 
         # 버튼 및 진행바 활성화
         self.btn_run.config(state="disabled")
