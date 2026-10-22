@@ -4,8 +4,12 @@ import fnmatch
 import hashlib
 import os
 import subprocess
+import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+
+FONT_FAMILY = "맑은 고딕" if sys.platform == "win32" else "sans-serif"
+MONO_FONT = ("Consolas", 9) if sys.platform == "win32" else ("monospace", 9)
 
 
 class FileMatcherApp:
@@ -18,8 +22,8 @@ class FileMatcherApp:
         # UI 스타일 설정
         style = ttk.Style()
         style.theme_use('clam')
-        style.configure("Treeview.Heading", font=("맑은 고딕", 9, "bold"))
-        style.configure("Treeview", font=("맑은 고딕", 9), rowheight=24)
+        style.configure("Treeview.Heading", font=(FONT_FAMILY, 9, "bold"))
+        style.configure("Treeview", font=(FONT_FAMILY, 9), rowheight=24)
 
         # 데이터 저장소
         self.src_files = []
@@ -203,7 +207,7 @@ class FileMatcherApp:
         self.setup_tree_columns(self.tree_match, col_defs, tree_col_def=tree_col_def)
 
         # 계층 스타일 태그 설정
-        self.tree_match.tag_configure('multi_parent', background='#EBF3FB', font=("맑은 고딕", 9, "bold"))
+        self.tree_match.tag_configure('multi_parent', background='#EBF3FB', font=(FONT_FAMILY, 9, "bold"))
         self.tree_match.tag_configure('multi_child', background='#F9FAFB')
         self.tree_match.tag_configure('single_match', background='#FFFFFF')
 
@@ -242,7 +246,7 @@ class FileMatcherApp:
         frame = ttk.Frame(self.tab_log)
         frame.pack(fill="both", expand=True)
 
-        self.txt_output = tk.Text(frame, wrap="word", font=("Consolas", 9))
+        self.txt_output = tk.Text(frame, wrap="word", font=MONO_FONT)
         scrollbar = ttk.Scrollbar(frame, command=self.txt_output.yview)
         self.txt_output.configure(yscrollcommand=scrollbar.set)
 
@@ -292,7 +296,14 @@ class FileMatcherApp:
     def open_file_path_in_explorer(self, filepath):
         if filepath and os.path.exists(filepath):
             norm_path = os.path.normpath(filepath)
-            subprocess.Popen(f'explorer /select,"{norm_path}"')
+            if sys.platform == "win32":
+                subprocess.Popen(f'explorer /select,"{norm_path}"')
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", "-R", norm_path])
+            else:
+                # Linux: xdg-open 등으로 파일이 위치한 디렉토리 열기
+                target_dir = os.path.dirname(norm_path) if os.path.isfile(norm_path) else norm_path
+                subprocess.Popen(["xdg-open", target_dir])
         else:
             messagebox.showwarning("경고", f"해당 경로의 파일을 찾을 수 없습니다:\n{filepath}")
 

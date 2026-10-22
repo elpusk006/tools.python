@@ -1,0 +1,67 @@
+name: Build Executables (Windows & Linux)
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+
+      - name: Build Windows Executable
+        run: |
+          cd match_dfile_ofile
+          pyinstaller --noconfirm --clean --onefile --windowed --name match_dfile_ofile --distpath dist/windows --workpath build/windows match_dfile_ofile.py
+
+      - name: Upload Windows Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: match_dfile_ofile-windows
+          path: match_dfile_ofile/dist/windows/match_dfile_ofile.exe
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install system dependencies (Tkinter)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+
+      - name: Build Linux Executable
+        run: |
+          cd match_dfile_ofile
+          pyinstaller --noconfirm --clean --onefile --windowed --name match_dfile_ofile --distpath dist/linux --workpath build/linux match_dfile_ofile.py
+          chmod +x dist/linux/match_dfile_ofile
+
+      - name: Upload Linux Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: match_dfile_ofile-linux
+          path: match_dfile_ofile/dist/linux/match_dfile_ofile
